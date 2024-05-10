@@ -22,7 +22,7 @@ logging.basicConfig(
 
 from .client import Client, ExportRequest, SeriesInfo  # NOQA: E402
 from .config import ServerConfig, register_server  # NOQA: E402
-from .exceptions import DrmsError, DrmsExportError, DrmsOperationNotSupported, DrmsQueryError  # NOQA: E402
+from .exceptions import DrmsError, DrmsExportError, DrmsOperationNotSupported, DrmsQueryError, DrmsLoginFailure  # NOQA: E402
 from .json import HttpJsonClient, HttpJsonRequest, JsocInfoConstants  # NOQA: E402
 from .utils import to_datetime  # NOQA: E402
 from .version import version as __version__  # NOQA: E402
@@ -53,10 +53,13 @@ __all__ = [
     "DrmsError",
     "DrmsExportError",
     "DrmsOperationNotSupported",
+    "DrmsLoginFailure"
     "DrmsQueryError",
     "ExportRequest",
     "HttpJsonClient",
     "HttpJsonRequest",
+    "HttpJsonGetRequest",
+    "HttpJsonPostRequest",
     "JsocInfoConstants",
     "register_server",
     "SeriesInfo",

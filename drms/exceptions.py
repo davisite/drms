@@ -3,6 +3,7 @@ __all__ = [
     "DrmsQueryError",
     "DrmsExportError",
     "DrmsOperationNotSupported",
+    "DrmsLoginFailure",
 ]
 
 
@@ -27,4 +28,9 @@ class DrmsExportError(DrmsError):
 class DrmsOperationNotSupported(DrmsError):
     """
     Operation is not supported by DRMS server.
+    """
+
+class DrmsLoginFailure(DrmsError):
+    """
+    Failure logging in with provided email address and password.
     """

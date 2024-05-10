@@ -633,13 +633,14 @@ class SessionAuthenticator(Authenticator):
         cookies = self._read_access_token()
         if cookies is None:
             # get new session cookie
+            logger.info(f"Did not find saved session; logging in")
+
             try:
                 response = httpx.get(endpoint)
                 response.raise_for_status()
             except httpx.HTTPError as exc:
                 raise DrmsLoginFailure(f'failure making get request to {exc.request.url!r}, status {exc.response.status_code}')
 
-            cookies = response.cookies
             soup = BeautifulSoup(response.text, "html.parser")
             csrf_token_tag = soup.select_one('#csrf_token')
             csrf_token = csrf_token_tag.attrs['value']
@@ -650,7 +651,9 @@ class SessionAuthenticator(Authenticator):
             if password is None:
                 raise DrmsLoginFailure(f'no password provided for login')
 
-            http_client = httpx.Client(cookies=cookies, default_encoding=encoding)
+            logger.info(f"Successfully read password")
+
+            http_client = httpx.Client(cookies=response.cookies, default_encoding=encoding)
 
             try:
                 response = http_client.post(
@@ -666,25 +669,15 @@ class SessionAuthenticator(Authenticator):
                 if exc.response.status_code != 302:
                     raise DrmsLoginFailure(f'failure making post request to {exc.request.url!r}, status {exc.response.status_code}')
 
-            # http_client2 = httpx.Client(cookies=cookies, default_encoding=encoding, session=session)
-
-
-
-            print(
-                http_client.get(
-                    'https://jsoc1.stanford.edu:8080/export/legacy/show_series?filter=me'
-                ).text
-            )
+            logger.info(f"Logged in to {response.url} successfully")
 
             # response.text has /export/request html; no need to read it
-            print(f'saving session cookie {cookies["session"]}')
-            self._write_access_token(cookies)
+            logger.info(f"Storing access token")
+            self._write_access_token(response.cookies)
         else:
-            print(f'got session cookie {cookies["session"]}')
             # a session already exists; a get on the endpoint will 
             # return /export/request html
-            for key, val in cookies.items():
-                print(f'cookie {key} {val}')
+            logger.info(f"Found saved session; restoring")
             try:
                 http_client = httpx.Client(cookies=cookies, default_encoding=encoding)
                 response = http_client.get(
@@ -692,14 +685,12 @@ class SessionAuthenticator(Authenticator):
                 )
                 response.raise_for_status()
             except httpx.HTTPError as exc:
-                raise DrmsLoginFailure(f'failure making get request to {exc.request.url!r}, status {exc.response.status_code}')
-
-            # print(f'XXXXXX {response.text}')
+                if exc.response.status_code != 302:
+                    raise DrmsLoginFailure(f'failure making get request to {exc.request.url!r}, status {exc.response.status_code}')
 
         return http_client
     
     def _read_access_token(self):
-        logger.info(f"Attempting to read access token {self._session_file}")
         cookies = None
 
         try:
@@ -708,6 +699,8 @@ class SessionAuthenticator(Authenticator):
             
             cookies = httpx.Cookies()
             cookies.jar._cookies.update(loaded_cookies)
+        except FileNotFoundError:
+            pass
         except OSError:
             logger.warning(f"Unable to read access token {self._session_file}")
         except EOFError:
@@ -716,7 +709,6 @@ class SessionAuthenticator(Authenticator):
         return cookies
 
     def _write_access_token(self, cookies):
-        logger.info(f"Attempting to write access token {self._session_file}")
         try:
             with open(self._session_file, 'wb') as cookies_f:
                 pickle.dump(cookies.jar._cookies, cookies_f)
@@ -724,7 +716,6 @@ class SessionAuthenticator(Authenticator):
             logger.warning(f"Unable to save access token {self._session_file}")
 
     def _read_password_file(self):
-        logger.info(f"Attempting to read password file {self._password_file}")
         password = None
 
         try:

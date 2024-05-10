@@ -1,14 +1,15 @@
 import json as _json
 from enum import Enum
-from urllib.parse import urlencode, quote_plus
+from urllib.parse import urlencode
 from urllib.request import HTTPError, urlopen
-
+import httpx
 from drms import logger
 
 from .config import ServerConfig, _server_configs
+from .exceptions import DrmsLoginFailure
 from .utils import _split_arg
 
-__all__ = ["JsocInfoConstants", "HttpJsonRequest", "HttpJsonClient"]
+__all__ = ["JsocInfoConstants", "HttpJsonRequest",  "HttpJsonGetRequest", "HttpJsonPostRequest","HttpJsonClient"]
 
 
 class JsocInfoConstants(Enum):
@@ -36,15 +37,11 @@ class HttpJsonRequest:
     Use `HttpJsonClient` to create an instance.
     """
 
-    def __init__(self, url, encoding):
+    def __init__(self, url, encoding, http_client):
         self._encoding = encoding
-        try:
-            self._http = urlopen(url)
-        except HTTPError as e:
-            e.msg = f"Failed to open URL: {e.url} with {e.code} - {e.msg}"
-            raise e
         self._data_str = None
         self._data = None
+        self._http_client = http_client
 
     def __repr__(self):
         return f"<HttpJsonRequest: {self.url}>"
@@ -56,14 +53,42 @@ class HttpJsonRequest:
     @property
     def raw_data(self):
         if self._data_str is None:
-            self._data_str = self._http.read()
+            # will use encoding in self._http_client, usu. utf8
+            self._data_str = self._http.text
         return self._data_str
 
     @property
     def data(self):
         if self._data is None:
-            self._data = _json.loads(self.raw_data.decode(self._encoding))
+            self._data = _json.loads(self.raw_data)
         return self._data
+
+class HttpJsonGetRequest(HttpJsonRequest):
+    def __init__(self, url, encoding, http_client):
+        super().__init__(url, encoding, http_client)
+        try:
+            self._http = http_client.get(url)
+            self._http.raise_for_status()
+        except httpx.HTTPError as exc:
+            exc.msg = f"Failed to open URL: {exc.request.url!r} with {exc.response.status_code} - {exc}"
+            raise exc
+        
+    def __repr__(self):
+        return f"<HttpJsonGetRequest: {self.url}>"
+
+
+class HttpJsonPostRequest(HttpJsonRequest):
+    def __init__(self, url, encoding, http_client):
+        super().__init__(url, encoding, http_client)
+        try:
+            self._http = http_client.get(url)
+            self._http.raise_for_status()
+        except httpx.HTTPError as exc:
+            exc.msg = f"Failed to open URL: {exc.request.url!r} with {exc.response.status_code} - {exc}"
+            raise exc
+        
+    def __repr__(self):
+        return f"<HttpJsonPostRequest: {self.url}>"
 
 
 class HttpJsonClient:
@@ -77,18 +102,37 @@ class HttpJsonClient:
         Defaults to JSOC.
     """
 
-    def __init__(self, server="jsoc"):
+    def __init__(self, server="jsoc", http_client=None):
         if isinstance(server, ServerConfig):
             self._server = server
         else:
             self._server = _server_configs[server.lower()]
 
+        self._http_client = http_client
+
     def __repr__(self):
         return f"<HttpJsonClient: {self._server.name}>"
 
-    def _json_request(self, url):
+    def _json_request(self, url, is_post=False):
         logger.debug(f"URL for request: {url}")
-        return HttpJsonRequest(url, self._server.encoding)
+        if self._http_client is None:
+            raise DrmsLoginFailure(f'unauthorized attempt to access {url}')
+
+        if is_post:
+            return HttpJsonPostRequest(url, self._server.encoding, self._http_client)
+        else:
+            return HttpJsonGetRequest(url, self._server.encoding, self._http_client)
+    
+    @property
+    def http_client(self):
+        return self._http_client
+
+    @http_client.setter
+    def http_client(self, value):
+        if isinstance(value, httpx.Client):
+            self._http_client = value
+        else:
+            logger.warning(f"invalid http_client {str(value)}")
 
     @property
     def server(self):
@@ -249,7 +293,7 @@ class HttpJsonClient:
             - 4: Email address has neither been validated nor registered
             - -2: Not a valid email address
         """
-        query = "?" + urlencode({"address": quote_plus(email), "checkonly": "1"})
+        query = "?" + urlencode({"address": email, "checkonly": "1"})
         req = self._json_request(self._server.url_check_address + query)
         return req.data
 
@@ -297,7 +341,7 @@ class HttpJsonClient:
             Dictionary containing the server response to the export
             request.
         """
-        req = self._json_request(self._exp_request_url(*args, **kwargs))
+        req = self._json_request(self._exp_request_url(*args, **kwargs), True)
         return req.data
 
     def _exp_request_url(

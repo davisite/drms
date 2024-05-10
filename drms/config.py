@@ -13,6 +13,7 @@ class ServerConfig:
 
     Available config keys are:
         name
+        authentication_method
         cgi_baseurl
         cgi_show_series
         cgi_jsoc_info
@@ -20,6 +21,7 @@ class ServerConfig:
         cgi_check_address
         cgi_show_series_wrapper
         show_series_wrapper_dbhost
+        wsgi_login
         url_show_series
         url_jsoc_info
         url_jsoc_fetch
@@ -40,6 +42,7 @@ class ServerConfig:
 
     _valid_keys = (
         "name",
+        "authentication_method",
         "cgi_baseurl",
         "cgi_show_series",
         "cgi_jsoc_info",
@@ -47,6 +50,7 @@ class ServerConfig:
         "cgi_check_address",
         "cgi_show_series_wrapper",
         "show_series_wrapper_dbhost",
+        "wsgi_login",
         "url_show_series",
         "url_jsoc_info",
         "url_jsoc_fetch",
@@ -68,9 +72,9 @@ class ServerConfig:
         if "name" not in d:
             raise ValueError('Server config entry "name" is missing')
 
-        # encoding defaults to latin1
+        # encoding defaults to utf8
         if "encoding" not in d:
-            d["encoding"] = "latin1"
+            d["encoding"] = "utf8"
 
         # Generate URL entries from CGI entries, if cgi_baseurl exists and
         # the specific URL entry is not already set.
@@ -143,17 +147,20 @@ _server_configs = {}
 register_server(
     ServerConfig(
         name="JSOC",
-        cgi_baseurl="http://jsoc.stanford.edu/cgi-bin/ajax/",
+        authentication_method="session",
+        cgi_baseurl="https://jsoc1.stanford.edu:8080/export/legacy/",
         cgi_show_series="show_series",
         cgi_jsoc_info="jsoc_info",
         cgi_jsoc_fetch="jsoc_fetch",
         cgi_check_address="checkAddress.sh",
         cgi_show_series_wrapper="showextseries",
         show_series_wrapper_dbhost="hmidb2",
-        http_download_baseurl="http://jsoc.stanford.edu/",
+        wsgi_login="https://jsoc1.stanford.edu:8080/login",
+        http_download_baseurl="https://jsoc1.stanford.edu/",
         ftp_download_baseurl="ftp://pail.stanford.edu/export/",
     ),
 )
+
 
 # Register KIS DRMS server.
 register_server(

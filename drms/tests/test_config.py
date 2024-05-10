@@ -60,6 +60,7 @@ def test_config_jsoc():
 
     cfg = _server_configs["jsoc"]
     assert cfg.name.lower() == "jsoc"
+    assert isinstance(cfg.authentication_method, str)
     assert isinstance(cfg.encoding, str)
     assert isinstance(cfg.cgi_show_series, str)
     assert isinstance(cfg.cgi_jsoc_info, str)
@@ -67,6 +68,7 @@ def test_config_jsoc():
     assert isinstance(cfg.cgi_check_address, str)
     assert isinstance(cfg.cgi_show_series_wrapper, str)
     assert isinstance(cfg.show_series_wrapper_dbhost, str)
+    assert isinstance(cfg.wsgi_login, str)
     assert cfg.http_download_baseurl.startswith("http://")
     assert cfg.ftp_download_baseurl.startswith("ftp://")
 
@@ -92,6 +94,7 @@ def test_config_kis():
     assert cfg.cgi_check_address is None
     assert cfg.cgi_show_series_wrapper is None
     assert cfg.show_series_wrapper_dbhost is None
+    assert cfg.wsgi_login is None
     assert cfg.http_download_baseurl is None
     assert cfg.ftp_download_baseurl is None
 
