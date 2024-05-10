@@ -1,8 +1,13 @@
+from abc import ABC, abstractmethod
+from bs4 import BeautifulSoup
 import os
 import re
 import time
 from pathlib import Path
 from collections import OrderedDict
+import getpass
+import httpx
+import pickle
 from urllib.error import URLError, HTTPError
 from urllib.parse import urljoin
 from urllib.request import urlretrieve
@@ -12,7 +17,7 @@ import pandas as pd
 
 from drms import logger
 
-from .exceptions import DrmsExportError, DrmsOperationNotSupported, DrmsQueryError
+from .exceptions import DrmsExportError, DrmsOperationNotSupported, DrmsLoginFailure, DrmsQueryError
 from .json import HttpJsonClient
 from .utils import _extract_series_name, _pd_to_numeric_coerce, _split_arg
 
@@ -584,6 +589,168 @@ class ExportRequest:
         res["download"] = downloads
         return res
 
+class Authenticator(ABC):
+    """
+    Abstract class that defines the authentication-method API
+    """
+    def __init__(self, method):
+        self._method = method
+
+    def __str__(self):
+        return self._method
+
+    @abstractmethod
+    def _read_access_token(self):
+        pass
+
+    @abstractmethod
+    def _write_access_token(self):
+        pass
+
+class TokenAuthenticator(Authenticator):
+    """
+    """
+    _token_file = Path(os.environ['HOME']) / '.drms_token'
+
+    def authenticate(self, email, encoding, endpoint):
+        pass
+
+    def _read_access_token(self):
+        pass
+
+    def _write_access_token(self, cookies):
+        pass
+
+class SessionAuthenticator(Authenticator):
+    """
+    """
+    _session_file = Path(os.environ['HOME']) / '.drms_session'
+    _password_file = Path(os.environ['HOME']) / '.drms_pass'
+    
+    def authenticate(self, email, encoding, endpoint):
+        http_client = None
+
+        cookies = self._read_access_token()
+        if cookies is None:
+            # get new session cookie
+            try:
+                response = httpx.get(endpoint)
+                response.raise_for_status()
+            except httpx.HTTPError as exc:
+                raise DrmsLoginFailure(f'failure making get request to {exc.request.url!r}, status {exc.response.status_code}')
+
+            cookies = response.cookies
+            soup = BeautifulSoup(response.text, "html.parser")
+            csrf_token_tag = soup.select_one('#csrf_token')
+            csrf_token = csrf_token_tag.attrs['value']
+
+            # use password file to attempt to authenticate
+            password = self._read_password_file()
+
+            if password is None:
+                raise DrmsLoginFailure(f'no password provided for login')
+
+            http_client = httpx.Client(cookies=cookies, default_encoding=encoding)
+
+            try:
+                response = http_client.post(
+                    url=endpoint,
+                    data={
+                        'email': email,
+                        'password': password,
+                        'csrf_token': csrf_token,
+                    },
+                )
+                response.raise_for_status()
+            except httpx.HTTPError as exc:
+                if exc.response.status_code != 302:
+                    raise DrmsLoginFailure(f'failure making post request to {exc.request.url!r}, status {exc.response.status_code}')
+
+            # http_client2 = httpx.Client(cookies=cookies, default_encoding=encoding, session=session)
+
+
+
+            print(
+                http_client.get(
+                    'https://jsoc1.stanford.edu:8080/export/legacy/show_series?filter=me'
+                ).text
+            )
+
+            # response.text has /export/request html; no need to read it
+            print(f'saving session cookie {cookies["session"]}')
+            self._write_access_token(cookies)
+        else:
+            print(f'got session cookie {cookies["session"]}')
+            # a session already exists; a get on the endpoint will 
+            # return /export/request html
+            for key, val in cookies.items():
+                print(f'cookie {key} {val}')
+            try:
+                http_client = httpx.Client(cookies=cookies, default_encoding=encoding)
+                response = http_client.get(
+                    url=endpoint
+                )
+                response.raise_for_status()
+            except httpx.HTTPError as exc:
+                raise DrmsLoginFailure(f'failure making get request to {exc.request.url!r}, status {exc.response.status_code}')
+
+            # print(f'XXXXXX {response.text}')
+
+        return http_client
+    
+    def _read_access_token(self):
+        logger.info(f"Attempting to read access token {self._session_file}")
+        cookies = None
+
+        try:
+            with open(self._session_file, 'rb') as session_f:
+                loaded_cookies = pickle.load(session_f)
+            
+            cookies = httpx.Cookies()
+            cookies.jar._cookies.update(loaded_cookies)
+        except OSError:
+            logger.warning(f"Unable to read access token {self._session_file}")
+        except EOFError:
+            logger.warning(f"Access token {self._session_file} is empty")
+
+        return cookies
+
+    def _write_access_token(self, cookies):
+        logger.info(f"Attempting to write access token {self._session_file}")
+        try:
+            with open(self._session_file, 'wb') as cookies_f:
+                pickle.dump(cookies.jar._cookies, cookies_f)
+        except OSError as exc:
+            logger.warning(f"Unable to save access token {self._session_file}")
+
+    def _read_password_file(self):
+        logger.info(f"Attempting to read password file {self._password_file}")
+        password = None
+
+        try:
+            with open(self._password_file, 'r') as password_f:
+                password = password_f.read().strip()
+        except OSError:
+            logger.warning(f"Unable to read passowrd file {self._password_file}")
+        except EOFError:
+            logger.warning(f"Password file {self._password_file} is empty")
+
+        return password
+
+class AuthenticatorFactory:
+    def __init__(self):
+        self._authenticators = {}
+
+    def register_authenticator_type(self, authenticator_name, authenticator):
+        if authenticator_name not in self._authenticators:
+            self._authenticators[authenticator_name] = authenticator
+
+    def get_authenticator(self, authenticator_name):
+        authenticator = self._authenticators.get(authenticator_name)
+        if not authenticator:
+            raise DrmsLoginFailure(f'unsupported authentication method {authenticator_name}')
+        
+        return authenticator(authenticator_name)
 
 class Client:
     """
@@ -598,10 +765,19 @@ class Client:
         Default email address used data export requests.
     """
 
-    def __init__(self, server="jsoc", *, email=None):
-        self._json = HttpJsonClient(server)
+    def __init__(self, server="jsoc", *, email):
+        self._authenticator = None
+        self._authenticator_factory = AuthenticatorFactory()
         self._info_cache = {}
-        self.email = email  # use property for email validation
+        self._is_authenticated = False
+        self._json = HttpJsonClient(server)
+        self._register_authenticators()
+        self._json.http_client = self._authenticate(email, self._server.authentication_method, self._server.encoding, self._server.wsgi_login) # for auth_required() export endpoints
+        self.email = email # use property for email validation
+
+    def _register_authenticators(self):
+        self._authenticator_factory.register_authenticator_type('session', SessionAuthenticator)
+        self._authenticator_factory.register_authenticator_type('token', TokenAuthenticator)
 
     def __repr__(self):
         return f"<Client: {self._server.name}>"
@@ -736,6 +912,33 @@ class Client:
                 if old_fname.endswith(ext):
                     return fname + ext
         return fname
+    
+    def _authenticate(self, email, method, encoding, wsgi_login):
+        http_client = None
+
+        if not self._is_authenticated:
+            if self._authenticator is None:
+                self._authenticator = self._authenticator_factory.get_authenticator(method)
+
+            if self._authenticator is None:
+                raise DrmsLoginFailure(f'failure obtaining authenticator for authentication method {method}')
+
+            try:
+                # authenticate() will use a saved token, if it exists, to 
+                # login to the export site; if the token does not exist
+                # then authenticate() will attempt to download the token;
+                # for some authenticators, this is not an option so 
+                # authenticate() will raise
+                http_client = self._authenticator.authenticate(email, encoding, wsgi_login)
+            except:
+                logger.error(f'unable to authenticate user `{email}` on `{wsgi_login}` with authentication method `{self._authenticator}`')
+                raise
+
+            self._is_authenticated = True
+        else:
+            http_client = self._json.http_client
+
+        return http_client
 
     # Export color table names, from (internal) series "jsoc.Color_Tables"
     _export_color_table_names = (
@@ -813,6 +1016,7 @@ class Client:
     def email(self, value):
         if value is not None and not self.check_email(value):
             raise ValueError("Email address is invalid or not registered")
+
         self._email = value
 
     def series(self, regex=None, *, full=False):
