@@ -649,7 +649,7 @@ class SessionAuthenticator(Authenticator):
             password = self._read_password_file()
 
             if password is None:
-                raise DrmsLoginFailure(f'no password provided for login')
+                raise DrmsLoginFailure(f'no password provided for login; to authenticate with a password, please create a password file `{self._password_file}` that contains the JSOC-export account password for user `{email}`')
 
             logger.info(f"Successfully read password")
 
@@ -701,8 +701,8 @@ class SessionAuthenticator(Authenticator):
             cookies.jar._cookies.update(loaded_cookies)
         except FileNotFoundError:
             pass
-        except OSError:
-            logger.warning(f"Unable to read access token {self._session_file}")
+        except OSError as exc:
+            logger.warning(f"Unable to read access token {self._session_file}: {exc}")
         except EOFError:
             logger.warning(f"Access token {self._session_file} is empty")
 
@@ -713,7 +713,7 @@ class SessionAuthenticator(Authenticator):
             with open(self._session_file, 'wb') as cookies_f:
                 pickle.dump(cookies.jar._cookies, cookies_f)
         except OSError as exc:
-            logger.warning(f"Unable to save access token {self._session_file}")
+            logger.warning(f"Unable to save access token `{self._session_file}`: {exc}")
 
     def _read_password_file(self):
         password = None
@@ -721,10 +721,10 @@ class SessionAuthenticator(Authenticator):
         try:
             with open(self._password_file, 'r') as password_f:
                 password = password_f.read().strip()
-        except OSError:
-            logger.warning(f"Unable to read passowrd file {self._password_file}")
+        except OSError as exc:
+            logger.error(f"Unable to read password file {self._password_file}: {exc}")
         except EOFError:
-            logger.warning(f"Password file {self._password_file} is empty")
+            logger.error(f"Password file {self._password_file} is empty")
 
         return password
 
